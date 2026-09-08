@@ -15,6 +15,7 @@ dependencies = [
     "alembic>=1.14",
     "feedparser>=6.0",
     "typer>=0.15",
+    "arize-phoenix>=20.8.0",
 ]
 
 [project.optional-dependencies]
