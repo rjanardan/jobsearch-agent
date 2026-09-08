@@ -1,0 +1,7 @@
+# Job filters enforced as policy (not prompt). Fill real values in
+# config/filters.yaml (gitignored).
+locations: []            # allowed metro areas, e.g. [Bengaluru, Remote]
+remote: any              # any | yes | no
+levels: []               # allowed seniority, e.g. [Staff, Principal, Director]
+comp_min: null           # currency-agnostic floor
+excluded_titles: []      # regexes, e.g. ["sales", "intern"]

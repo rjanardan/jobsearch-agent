@@ -1,0 +1,9 @@
+# Seed list of companies whose career pages/ATS feeds are scanned nightly.
+# careers_type: greenhouse | lever | ashby | workday | custom
+# Committed example rows only — replace with the real target list in
+# config/companies.yaml (gitignored).
+- name: Example Corp
+  slug: example-corp
+  careers_type: greenhouse
+  careers_url: https://jobs.example.com
+  priority: 1

@@ -1,0 +1,29 @@
+# secrets
+.env
+
+# personal data — never tracked
+private/
+
+# real configs carry personal targets/filters/variants; only *.example.yaml ship
+config/*.yaml
+!config/*.example.yaml
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# local state
+data/
+*.log
+*.db
+*.sqlite3
+
+# trace stores
+.phoenix/
+traces/
+
+# os
+.DS_Store

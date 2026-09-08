@@ -1,0 +1,12 @@
+# Resume variant rules consumed by the writer stage. The master resume is the
+# single fact-checked source; variants only frame/trim it. Real rules live in
+# config/variants.yaml (gitignored).
+master: master.pdf
+variants:
+  - name: target_a
+    applies_to: [enterprise]
+    rules:
+      - keep_factual_titles: true   # never soften or inflate actual titles
+      - link_strip: false           # strip portfolio/community links in this variant
+      - drop_sections: []           # e.g. [startups] for conservative targets
+      - max_pages: 1

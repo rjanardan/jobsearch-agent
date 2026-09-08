@@ -1,0 +1,12 @@
+# Source enablement and cadence. Real values in config/sources.yaml (gitignored).
+discovery:
+  hn_whoishiring: {enabled: true, cadence_hours: 24}
+  rss:
+    enabled: false
+    feeds: []
+  wellfound:
+    enabled: true
+    cadence_hours: 24
+    query: ""          # role keywords
+ats_scan: {enabled: true, cadence_hours: 24}
+linkedin: {enabled: false, daily_lookup_cap: 10}
