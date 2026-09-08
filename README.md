@@ -38,5 +38,8 @@ deploy/           optional docker-compose for VM deployment; launchd plist
 
 ## Status
 
-Wiring stage: repository scaffold and model interface. No stages implemented
-yet. See the requirements and design artifacts in `docs/` (in progress).
+Wiring stage complete: Postgres checkpointer persistence and OpenTelemetry
+traces into Phoenix verified end to end (`scripts/smoke.py`). Requirements,
+architecture, and system design artifacts in `docs/`. Next: implementation —
+schema migrations, discovery adapters, matching, artifact writers, tracker
+sync.
