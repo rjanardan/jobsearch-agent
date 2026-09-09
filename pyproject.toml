@@ -16,6 +16,10 @@ dependencies = [
     "feedparser>=6.0",
     "typer>=0.15",
     "arize-phoenix>=20.8.0",
+    "sqlalchemy>=2.0.52",
+    "pgvector>=0.5.0",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +30,9 @@ dev = [
 
 [tool.uv]
 package = true
+
+[project.scripts]
+ja = "jobagent.cli.ja:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
