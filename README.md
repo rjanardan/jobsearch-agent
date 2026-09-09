@@ -8,8 +8,7 @@ synced to a versioned tracker.
 
 ## Design intent
 
-A self-hosted, single-node replica of a managed agent platform's architecture
-(Bedrock AgentCore reference): harness-orchestrated stage pipeline, MCP-style
+A self-hosted, single-node replica of a managed agent platform's architecture: harness-orchestrated stage pipeline, MCP-style
 tool gateway, Postgres state and memory, policy-enforced tool autonomy,
 guardrails on model input/output, OpenTelemetry traces, and regression-gated
 evaluation. Every component is open source; cloud spend is limited to LLM
