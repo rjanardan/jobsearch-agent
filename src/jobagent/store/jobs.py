@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ from jobagent.store.models import Job, SourceState
 def upsert_jobs(session: Session, jobs: list[dict]) -> dict:
     """Insert or refresh jobs by fingerprint. Returns {"inserted": n, "updated": n}."""
     inserted = updated = 0
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     seen: set[str] = set()
     for j in jobs:
         fp = j["fingerprint"]
@@ -42,7 +42,7 @@ def touch_source(
     if row is None:
         row = SourceState(source=source)
         session.add(row)
-    row.last_run_at = datetime.now(timezone.utc)
+    row.last_run_at = datetime.now(UTC)
     row.healthy = ok
     row.error = {"message": error} if error else None
     if cursor is not None:

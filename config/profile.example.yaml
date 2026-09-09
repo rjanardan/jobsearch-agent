@@ -1,0 +1,56 @@
+# Synthetic example profile — replace with your own (private/, gitignored).
+# Schema mirrors tools/profile.py ProfileData. Load with:
+#   ja profile load config/profile.example.yaml
+# To parse a resume instead:  ja profile load path/to/resume.pdf|.txt|.md
+name: Example Candidate
+headline: AI platform engineering leader
+location: Bengaluru, India
+remote_ok: true
+comp_min: null
+comp_max: null
+currency: null
+experience_years: 12
+skills:
+  - name: Python
+    proficiency: 5
+    keywords: [python]
+  - name: PyTorch
+    proficiency: 4
+    keywords: [pytorch, torch]
+  - name: TensorFlow
+    proficiency: 3
+    keywords: [tensorflow, keras]
+  - name: PostgreSQL
+    proficiency: 4
+    keywords: [postgres, postgresql, pgvector]
+  - name: LangGraph
+    proficiency: 4
+    keywords: [langgraph]
+  - name: Kubernetes
+    proficiency: 3
+    keywords: [kubernetes, k8s, docker]
+  - name: FastAPI
+    proficiency: 4
+    keywords: [fastapi]
+  - name: TypeScript
+    proficiency: 3
+    keywords: [typescript, angular]
+roles:
+  - title: Head of AI Engineering
+    org: ExampleCorp
+    years: "2021-2026"
+  - title: Staff Engineer
+    org: ExampleLabs
+    years: "2016-2021"
+domains:
+  - AI platform
+  - machine learning
+  - infrastructure
+  - agentic AI
+education:
+  - degree: M.Tech Data Science
+    school: BITS Pilani
+    year: "2024"
+target_levels: [Head, Staff, Principal]
+target_titles: [Head of AI, Staff Engineer, Principal Engineer, Engineering Leader]
+notes: Synthetic profile for pipeline verification. Replace before real use.

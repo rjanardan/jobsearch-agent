@@ -1,15 +1,30 @@
 """ATS board adapters: Greenhouse, Lever, Ashby public JSON APIs.
 
 Board tokens map to company careers pages (config/companies.yaml).
+Greenhouse list responses omit job descriptions unless ?content=true is
+passed; descriptions feed the matcher and artifact stages, so they are
+fetched with the list in one round trip.
 """
 
 from __future__ import annotations
 
 import httpx
 
-GREENHOUSE = "https://boards-api.greenhouse.io/v1/boards/{board}/jobs"
+GREENHOUSE = "https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
 LEVER = "https://api.lever.co/v0/postings/{board}?mode=json"
 ASHBY = "https://api.ashbyhq.com/posting-api/job-board/{board}"
+
+
+def _clean_html(html: str | None) -> str:
+    """Crude but sufficient HTML→text for job descriptions (entities + tags)."""
+    import html as _html
+    import re
+
+    text = _html.unescape(html or "")
+    text = re.sub(r"<br\s*/?>", "\n", text)
+    text = re.sub(r"</(p|div|li|h\d|ul|ol)>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"[ \t]+", " ", text).strip()
 
 
 def _gh(client: httpx.Client, board: str) -> list[dict]:
@@ -25,7 +40,7 @@ def _gh(client: httpx.Client, board: str) -> list[dict]:
             "location": (j.get("location") or {}).get("name") if isinstance(j.get("location"), dict) else None,
             "url": j.get("absolute_url"),
             "posted_at": j.get("updated_at"),
-            "raw_text": j.get("content", "")[:500],
+            "description": _clean_html(j.get("content")),
         }
         for j in jobs
     ]
@@ -47,7 +62,7 @@ def _lever(client: httpx.Client, board: str) -> list[dict]:
                 "location": cat.get("location"),
                 "url": j.get("hostedUrl"),
                 "posted_at": j.get("createdAt"),
-                "raw_text": (j.get("descriptionPlain") or "")[:500],
+                "description": _clean_html(j.get("description") or j.get("descriptionPlain")),
             }
         )
     return out
@@ -69,6 +84,7 @@ def _ashby(client: httpx.Client, board: str) -> list[dict]:
                 "location": j.get("location") or (j.get("secondaryLocations") or [None])[0],
                 "url": j.get("jobUrl"),
                 "posted_at": j.get("publishedAt"),
+                "description": _clean_html(j.get("descriptionHtml") or j.get("descriptionPlain")),
                 "raw_text": f"remote={j.get('isRemote')} employment={j.get('employmentType')} comp={comp}",
             }
         )

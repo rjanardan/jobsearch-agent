@@ -32,7 +32,10 @@ def _parse_date(value) -> datetime | None:
     if isinstance(value, datetime):
         return value
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        text = str(value)
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        return datetime.fromisoformat(text)
     except ValueError:
         return None
 
@@ -66,6 +69,10 @@ def _ingest(session: Session, raw_listings: list[dict], bucket: str, summary: di
         if extracted is None and _needs_extraction(raw):
             continue  # classified as non-job or extraction failed
         remote_raw = (extracted or {}).get("remote") if extracted else None
+        # description: structured sources carry clean text already; unstructured
+        # sources fall back to the raw listing text extraction saw
+        description = raw.get("description") or raw.get("raw_text") or ""
+        raw_json = {k: v for k, v in raw.items() if k != "description"}
         normalized.append(
             {
                 "source": raw["source"] if raw.get("source") else bucket,
@@ -78,7 +85,8 @@ def _ingest(session: Session, raw_listings: list[dict], bucket: str, summary: di
                 "level": (extracted or {}).get("level") if extracted else raw.get("level"),
                 "url": (extracted or {}).get("url") if extracted else raw.get("url"),
                 "posted_at": _parse_date(raw.get("posted_at")),
-                "raw": raw if len(str(raw)) < 2000 else {"truncated": True},
+                "description": description[:20000] or None,
+                "raw": raw_json if len(str(raw_json)) < 2000 else {"truncated": True},
                 "active": True,
             }
         )

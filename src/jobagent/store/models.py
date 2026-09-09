@@ -5,7 +5,17 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -54,6 +64,7 @@ class Job(Base):
     currency: Mapped[str | None] = mapped_column(String(8))
     url: Mapped[str | None] = mapped_column(Text)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    description: Mapped[str | None] = mapped_column(Text)  # full listing text (match + artifact input)
     skills: Mapped[dict | None] = mapped_column(JSONB)
     raw: Mapped[dict | None] = mapped_column(JSONB)
     embedding: Mapped[list | None] = mapped_column(Vector(768))

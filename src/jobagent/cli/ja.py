@@ -9,10 +9,16 @@ import typer
 import yaml
 from rich.console import Console
 from rich.table import Table
+from sqlalchemy import select
 
 from jobagent.store.db import session_scope
 from jobagent.store.jobs import count_jobs, recent_jobs
+from jobagent.store.matches import count_matches
+from jobagent.store.models import Job, Match
+from jobagent.store.profiles import add_profile, count_profiles, get_active_profile
 from jobagent.tools.discover import run_discovery
+from jobagent.tools.profile import ProfileParseError, load_profile, source_hash
+from jobagent.tools.scout import run_matching
 
 app = typer.Typer(help="Agentic job-search copilot")
 console = Console()
@@ -30,6 +36,8 @@ def _configs() -> tuple[dict, list[dict]]:
             companies = yaml.safe_load(fh) or []
     return sources, companies
 
+
+# ---------------------------------------------------------------- discovery
 
 @app.command()
 def discover() -> None:
@@ -71,6 +79,85 @@ def jobs(limit: int = 10) -> None:
     for j in rows:
         table.add_row(j.company_name or "-", j.title or "-", j.location or "-", j.source, j.url or "-")
     console.print(table)
+
+
+# ------------------------------------------------------------------ profile
+
+profile_app = typer.Typer(help="Master profile (FR-1/2)")
+
+
+@profile_app.command("load")
+def profile_load(path: str) -> None:
+    """Parse a resume (pdf/txt/md) or structured profile (yaml/json) into the store."""
+    try:
+        data = load_profile(path)
+        with session_scope() as session:
+            row = add_profile(session, data.model_dump(mode="json"), source_hash(path))
+    except ProfileParseError as exc:
+        console.print(f"[red]profile load failed:[/red] {exc}")
+        raise typer.Exit(1)
+    console.print(
+        f"[green]profile v{row.version} active[/green] — {data.name or '(unnamed)'} | "
+        f"{len(data.skills)} skills, {len(data.domains)} domains"
+    )
+
+
+@profile_app.command("show")
+def profile_show() -> None:
+    """Show the active profile."""
+    with session_scope() as session:
+        n = count_profiles(session)
+        p = get_active_profile(session)
+    if p is None:
+        console.print("no active profile — run `ja profile load <file>`")
+        raise typer.Exit(1)
+    d = p.data
+    console.print(f"[bold]profile v{p.version}[/bold] (of {n} versions) — {d.get('name') or '(unnamed)'}")
+    console.print(f"headline: {d.get('headline') or '-'} | location: {d.get('location') or '-'} | remote_ok: {d.get('remote_ok')}")
+    skills = ", ".join(f"{s['name']}({s['proficiency']})" for s in d.get("skills", []))
+    console.print(f"skills: {skills}")
+    console.print(f"domains: {', '.join(d.get('domains', []))}")
+    console.print(f"target levels: {', '.join(d.get('target_levels', []))}")
+
+
+app.add_typer(profile_app, name="profile")
+
+
+# ------------------------------------------------------------------- matching
+
+@app.command()
+def match(cutoff: float = 60.0, top: int = 10) -> None:
+    """Score all active jobs against the active profile (FR-7..9)."""
+    with session_scope() as session:
+        try:
+            summary = run_matching(session, cutoff=cutoff)
+        except ProfileParseError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
+        rows = (
+            session.execute(
+                select(Match, Job)
+                .join(Job, Job.id == Match.job_id)
+                .where(Match.profile_version == summary["profile_version"])
+                .order_by(Match.score.desc())
+                .limit(top)
+            )
+            .all()
+        )
+        tally = count_matches(session, summary["profile_version"])
+    console.print(
+        f"[bold]{summary['jobs_total']}[/bold] jobs | {summary['policy_rejected']} policy-rejected | "
+        f"{summary['scored']} scored | [green]{tally['passed']} passed[/green] (cutoff {cutoff})"
+    )
+    table = Table(title=f"Top {len(rows)} by score (profile v{summary['profile_version']})")
+    for col in ("score", "pass", "company", "title", "location"):
+        table.add_column(col)
+    for m, j in rows:
+        table.add_row(f"{m.score:.0f}", "Y" if m.passed else "n", j.company_name or "-", j.title or "-", j.location or "-")
+    console.print(table)
+    for m, j in rows[:5]:
+        console.print(f"\n[bold cyan]{m.score:.0f}[/bold cyan] {j.company_name} — {j.title}")
+        console.print(m.rationale or "(policy-rejected)")
 
 
 def main() -> None:
