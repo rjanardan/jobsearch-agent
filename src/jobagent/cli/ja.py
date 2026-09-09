@@ -162,6 +162,43 @@ def match(cutoff: float = 60.0, top: int = 10) -> None:
         console.print(m.rationale or "(policy-rejected)")
 
 
+# --------------------------------------------------------------------- nightly
+
+@app.command()
+def nightly(cutoff: float = 60.0, force: bool = False) -> None:
+    """Run the scheduled graph: discover -> match (LangGraph, Postgres-checkpointed)."""
+    from jobagent.graph.nightly import run_nightly
+
+    try:
+        state = run_nightly(cutoff=cutoff, force=force)
+    except ProfileParseError as exc:
+        console.print(f"[red]nightly failed:[/red] {exc}")
+        raise typer.Exit(1)
+    except Exception as exc:  # noqa: BLE001 — unattended job: clean error beats a traceback
+        console.print(f"[red]nightly failed:[/red] {type(exc).__name__}: {exc}")
+        raise typer.Exit(1)
+    tag = "replayed (already ran for this thread)" if state.get("_replayed") else "ran"
+    console.print(
+        f"[bold]nightly {state.get('_run_id')}[/bold] — {tag} — thread {state.get('_thread_id')}"
+    )
+    d = state.get("discover") or {}
+    total = {"fetched": 0, "inserted": 0, "updated": 0}
+    for s in d.values():
+        for k in total:
+            total[k] += int(s.get(k, 0) or 0)
+    errors = [n for n, s in d.items() if s.get("error")]
+    line = f"discover: fetched={total['fetched']} inserted={total['inserted']} updated={total['updated']}"
+    if errors:
+        line += f" | source errors: {errors}"
+    console.print(line)
+    m = state.get("matches") or {}
+    if m:
+        console.print(
+            f"match: {m.get('jobs_total')} jobs | {m.get('policy_rejected')} policy-rejected | "
+            f"{m.get('scored')} scored | {m.get('passed')} passed"
+        )
+
+
 def main() -> None:
     app()
 
