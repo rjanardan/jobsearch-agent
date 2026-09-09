@@ -12,8 +12,17 @@ for name in com.jobsearch-agent.nightly com.jobsearch-agent.phoenix; do
   plist="$REPO/deploy/$name.plist"
   sed "s|__REPO__|$REPO|g; s|__HOME__|$HOME|g" "$plist" > "$LA/$name.plist"
   launchctl bootout "gui/$(id -u)/$name" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$LA/$name.plist"
-  echo "loaded $name"
+  sleep 1  # let launchd finish teardown before rebootstrap (KeepAlive race -> EIO)
+  for attempt in 1 2 3; do
+    if launchctl bootstrap "gui/$(id -u)" "$LA/$name.plist" 2>/dev/null; then
+      break
+    fi
+    echo "bootstrap $name attempt $attempt failed; retrying"
+    sleep 2
+  done
+  launchctl print "gui/$(id -u)/$name" >/dev/null 2>&1 \
+    && echo "loaded $name" \
+    || { echo "FAILED to load $name"; exit 1; }
 done
 
 echo
