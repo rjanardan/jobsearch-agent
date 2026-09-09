@@ -1,4 +1,9 @@
-"""Discovery orchestration: fetch -> extract -> normalize -> persist (FR-3..5)."""
+"""Discovery orchestration: fetch -> extract -> normalize -> persist (FR-3..5).
+
+Each run emits an OTel trace (discover.run -> per-source spans, plus an
+extract.local_llm span around the local-model extraction phase) so Phoenix
+shows live discovery runs with per-source counts and latencies.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ from datetime import datetime
 import httpx
 from sqlalchemy.orm import Session
 
+from jobagent import telemetry
 from jobagent.adapters import ats, hn, rss
 from jobagent.store.jobs import touch_source, upsert_jobs
 
@@ -54,13 +60,17 @@ def _ingest(session: Session, raw_listings: list[dict], bucket: str, summary: di
     if any(_needs_extraction(r) for r in raw_listings):
         from jobagent.tools.extract import extract_listing
 
-        def _extract(raw: dict) -> tuple[dict, dict | None]:
-            if _needs_extraction(raw):
-                return raw, extract_listing(raw["raw_text"])
-            return raw, None
+        with telemetry.span(
+            "extract.local_llm",
+            attrs={"listings": len(raw_listings), "local_only": True},
+        ):
+            def _extract(raw: dict) -> tuple[dict, dict | None]:
+                if _needs_extraction(raw):
+                    return raw, extract_listing(raw["raw_text"])
+                return raw, None
 
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            pairs = list(pool.map(_extract, raw_listings))
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pairs = list(pool.map(_extract, raw_listings))
     else:
         pairs = [(r, None) for r in raw_listings]
 
@@ -95,48 +105,76 @@ def _ingest(session: Session, raw_listings: list[dict], bucket: str, summary: di
     summary[bucket] = {"fetched": fetched, **result}
 
 
+def _note_source(sp, summary: dict, bucket: str) -> None:
+    """Copy a source's summary counts onto its span (counts known post-run)."""
+    entry = summary.get(bucket) or {}
+    sp.set_attribute("fetched", int(entry.get("fetched") or 0))
+    sp.set_attribute("inserted", int(entry.get("inserted") or 0))
+    sp.set_attribute("updated", int(entry.get("updated") or 0))
+    if entry.get("error"):
+        sp.set_attribute("error", str(entry["error"])[:500])
+
+
 def run_discovery(session: Session, sources_cfg: dict, companies: list[dict]) -> dict:
     """Run every enabled source; a failing source is recorded, never fatal."""
     summary: dict[str, dict] = {}
     client = httpx.Client(timeout=30)
 
-    hn_cfg = sources_cfg.get("discovery", {}).get("hn_whoishiring", {})
-    if hn_cfg.get("enabled", True):
-        print("discover: hn fetch+extract...", flush=True)
+    with telemetry.span("discover.run") as root:
         try:
-            thread_id = hn.latest_hiring_thread_id(client)
-            raw = hn.fetch_thread_comments(client, thread_id, limit=hn_cfg.get("max_comments", 12))
-            _ingest(session, raw, "hn", summary)
-            print(f"discover: hn done -> {summary.get('hn', {}).get('inserted', 0)} new", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            touch_source(session, "hn", ok=False, error=str(exc))
-            summary["hn"] = {"error": str(exc)}
-            print(f"discover: hn failed: {exc}", flush=True)
-    client.close()
+            hn_cfg = sources_cfg.get("discovery", {}).get("hn_whoishiring", {})
+            if hn_cfg.get("enabled", True):
+                print("discover: hn fetch+extract...", flush=True)
+                with telemetry.span("discover.hn") as sp:
+                    try:
+                        thread_id = hn.latest_hiring_thread_id(client)
+                        raw = hn.fetch_thread_comments(client, thread_id, limit=hn_cfg.get("max_comments", 12))
+                        _ingest(session, raw, "hn", summary)
+                        print(f"discover: hn done -> {summary.get('hn', {}).get('inserted', 0)} new", flush=True)
+                    except Exception as exc:  # noqa: BLE001
+                        touch_source(session, "hn", ok=False, error=str(exc))
+                        summary["hn"] = {"error": str(exc)}
+                        print(f"discover: hn failed: {exc}", flush=True)
+                    _note_source(sp, summary, "hn")
 
-    rss_cfg = sources_cfg.get("discovery", {}).get("rss", {})
-    if rss_cfg.get("enabled") and rss_cfg.get("feeds"):
-        for feed_url in rss_cfg["feeds"]:
-            print(f"discover: rss {feed_url}...", flush=True)
-            try:
-                raw = rss.fetch_feed(feed_url, limit=rss_cfg.get("limit", 10))
-                _ingest(session, raw, "rss", summary)
-                print(f"discover: rss done -> {summary.get('rss', {}).get('inserted', 0)} new", flush=True)
-            except Exception as exc:  # noqa: BLE001
-                touch_source(session, "rss", ok=False, error=str(exc))
-                summary["rss"] = {"error": str(exc)}
-                print(f"discover: rss failed: {exc}", flush=True)
+            rss_cfg = sources_cfg.get("discovery", {}).get("rss", {})
+            if rss_cfg.get("enabled") and rss_cfg.get("feeds"):
+                for feed_url in rss_cfg["feeds"]:
+                    print(f"discover: rss {feed_url}...", flush=True)
+                    with telemetry.span("discover.rss", attrs={"feed": feed_url}) as sp:
+                        try:
+                            raw = rss.fetch_feed(feed_url, limit=rss_cfg.get("limit", 10))
+                            _ingest(session, raw, "rss", summary)
+                            print(f"discover: rss done -> {summary.get('rss', {}).get('inserted', 0)} new", flush=True)
+                        except Exception as exc:  # noqa: BLE001
+                            touch_source(session, "rss", ok=False, error=str(exc))
+                            summary["rss"] = {"error": str(exc)}
+                            print(f"discover: rss failed: {exc}", flush=True)
+                        _note_source(sp, summary, "rss")
 
-    ats_cfg = sources_cfg.get("ats_scan", {})
-    if ats_cfg.get("enabled", True):
-        ats_companies = [c for c in companies if c.get("careers_type") in {"greenhouse", "lever", "ashby"}]
-        print("discover: ats scan...", flush=True)
-        try:
-            raw = ats.fetch_ats(ats_companies)
-            _ingest(session, raw, "ats", summary)
-            print(f"discover: ats done -> {summary.get('ats', {}).get('inserted', 0)} new", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            touch_source(session, "ats", ok=False, error=str(exc))
-            summary["ats"] = {"error": str(exc)}
-            print(f"discover: ats failed: {exc}", flush=True)
+            ats_cfg = sources_cfg.get("ats_scan", {})
+            if ats_cfg.get("enabled", True):
+                ats_companies = [c for c in companies if c.get("careers_type") in {"greenhouse", "lever", "ashby"}]
+                print("discover: ats scan...", flush=True)
+                with telemetry.span("discover.ats") as sp:
+                    try:
+                        raw = ats.fetch_ats(ats_companies)
+                        _ingest(session, raw, "ats", summary)
+                        print(f"discover: ats done -> {summary.get('ats', {}).get('inserted', 0)} new", flush=True)
+                    except Exception as exc:  # noqa: BLE001
+                        touch_source(session, "ats", ok=False, error=str(exc))
+                        summary["ats"] = {"error": str(exc)}
+                        print(f"discover: ats failed: {exc}", flush=True)
+                    _note_source(sp, summary, "ats")
+        finally:
+            client.close()
+
+        # Root span carries run-level totals once every source has reported.
+        totals = {"fetched": 0, "inserted": 0, "updated": 0}
+        for entry in summary.values():
+            for key in totals:
+                totals[key] += int(entry.get(key) or 0)
+        root.set_attribute("sources", ",".join(sorted(summary)))
+        for key, value in totals.items():
+            root.set_attribute(f"{key}_total", value)
     return summary

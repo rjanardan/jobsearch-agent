@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from sqlalchemy import select
 
+from jobagent import telemetry
 from jobagent.store.db import session_scope
 from jobagent.store.jobs import count_jobs, recent_jobs
 from jobagent.store.matches import count_matches
@@ -90,7 +91,8 @@ profile_app = typer.Typer(help="Master profile (FR-1/2)")
 def profile_load(path: str) -> None:
     """Parse a resume (pdf/txt/md) or structured profile (yaml/json) into the store."""
     try:
-        data = load_profile(path)
+        with telemetry.span("profile.load", attrs={"source": Path(path).name}):
+            data = load_profile(path)
         with session_scope() as session:
             row = add_profile(session, data.model_dump(mode="json"), source_hash(path))
     except ProfileParseError as exc:

@@ -1,7 +1,9 @@
 """Match orchestration: policy gate -> deterministic scoring -> persist.
 
 One function the CLI and the (later) nightly graph both call, so scores are
-identical however a run is triggered (FR-20 re-runnable).
+identical however a run is triggered (FR-20 re-runnable). Emits an OTel
+trace per run (match.run -> policy gate + scored batches) so Phoenix shows
+live per-run traces with stage latencies and counts.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from jobagent import telemetry
 from jobagent.guardrails.policy import apply_policy
 from jobagent.store.matches import clear_matches, upsert_match
 from jobagent.store.models import Job, Profile
@@ -20,6 +23,10 @@ from jobagent.tools.match import score_job
 from jobagent.tools.profile import ProfileData, ProfileParseError
 
 CONFIG_DIR = Path(os.environ.get("JOBAGENT_CONFIG_DIR", "config"))
+
+# Scored jobs per child span, so one run's trace stays readable at any
+# store size (a 418-job run -> ~6 spans, not ~420).
+SCORE_BATCH = 100
 
 
 def load_filters() -> dict:
@@ -29,6 +36,21 @@ def load_filters() -> dict:
         with open(path, encoding="utf-8") as fh:
             return yaml.safe_load(fh) or {}
     return {}
+
+
+def _job_dict(job: Job) -> dict:
+    return {
+        "title": job.title,
+        "company_name": job.company_name,
+        "level": job.level,
+        "location": job.location,
+        "remote": job.remote,
+        "comp_min": job.comp_min,
+        "comp_max": job.comp_max,
+        "currency": job.currency,
+        "description": job.description,
+        "raw": job.raw,
+    }
 
 
 def run_matching(session: Session, cutoff: float = 60.0) -> dict:
@@ -47,48 +69,59 @@ def run_matching(session: Session, cutoff: float = 60.0) -> dict:
     jobs = session.execute(select(Job).where(Job.active.is_(True))).scalars().all()
     clear_matches(session, profile.version)
 
-    policy_rejected = 0
-    scored = 0
-    passed = 0
-    for job in jobs:
-        job_dict = {
-            "title": job.title,
-            "company_name": job.company_name,
-            "level": job.level,
-            "location": job.location,
-            "remote": job.remote,
-            "comp_min": job.comp_min,
-            "comp_max": job.comp_max,
-            "currency": job.currency,
-            "description": job.description,
-            "raw": job.raw,
-        }
-        decision = apply_policy(job_dict, filters)
-        if not decision.allowed:
-            policy_rejected += 1
-            upsert_match(
-                session,
-                job.id,
-                profile.version,
-                {
-                    "score": 0.0,
-                    "dimensions": {},
-                    "gaps": decision.reasons,
-                    "rationale": f"policy-rejected: {'; '.join(decision.reasons)}",
-                    "passed": False,
-                },
-            )
-            continue
-        result = score_job(profile_data, job_dict, cutoff=cutoff)
-        upsert_match(session, job.id, profile.version, result.to_payload())
-        scored += 1
-        passed += 1 if result.passed else 0
+    with telemetry.span(
+        "match.run",
+        attrs={"profile_version": profile.version, "cutoff": cutoff, "jobs_total": len(jobs)},
+    ) as root:
+        # Phase 1: policy gate (FR-6) — reject with recorded reason.
+        allowed: list[Job] = []
+        rejected = 0
+        with telemetry.span("match.policy_gate", attrs={"evaluated": len(jobs)}) as gate:
+            for job in jobs:
+                decision = apply_policy(_job_dict(job), filters)
+                if not decision.allowed:
+                    rejected += 1
+                    upsert_match(
+                        session,
+                        job.id,
+                        profile.version,
+                        {
+                            "score": 0.0,
+                            "dimensions": {},
+                            "gaps": decision.reasons,
+                            "rationale": f"policy-rejected: {'; '.join(decision.reasons)}",
+                            "passed": False,
+                        },
+                    )
+                else:
+                    allowed.append(job)
+            gate.set_attribute("allowed", len(allowed))
+            gate.set_attribute("rejected", rejected)
 
-    session.flush()  # make rows visible to the caller's own session (autoflush=False)
+        # Phase 2: deterministic scoring in readable batches.
+        scored = 0
+        passed = 0
+        for start in range(0, len(allowed), SCORE_BATCH):
+            chunk = allowed[start : start + SCORE_BATCH]
+            with telemetry.span(
+                "match.score_batch",
+                attrs={"batch": start // SCORE_BATCH, "jobs": len(chunk)},
+            ):
+                for job in chunk:
+                    result = score_job(profile_data, _job_dict(job), cutoff=cutoff)
+                    upsert_match(session, job.id, profile.version, result.to_payload())
+                    scored += 1
+                    passed += 1 if result.passed else 0
+
+        session.flush()  # make rows visible to the caller's own session (autoflush=False)
+        root.set_attribute("policy_rejected", rejected)
+        root.set_attribute("scored", scored)
+        root.set_attribute("passed", passed)
+
     return {
         "profile_version": profile.version,
         "jobs_total": len(jobs),
-        "policy_rejected": policy_rejected,
+        "policy_rejected": rejected,
         "scored": scored,
         "passed": passed,
     }
