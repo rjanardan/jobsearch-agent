@@ -1,7 +1,7 @@
 # Synthetic example profile — replace with your own (private/, gitignored).
 # Schema mirrors tools/profile.py ProfileData. Load with:
 #   ja profile load config/profile.example.yaml
-# To parse a resume instead:  ja profile load path/to/resume.pdf|.txt|.md
+# To parse a resume instead:  ja profile load path/to/resume.pdf|.txt|.md|.html
 name: Example Candidate
 headline: AI platform engineering leader
 location: Bengaluru, India

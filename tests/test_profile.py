@@ -56,3 +56,35 @@ def test_profile_data_serializes() -> None:
     data = ProfileData.model_validate({"name": "X", "skills": [{"name": "Py", "proficiency": 3}]})
     dumped = data.model_dump(mode="json")
     assert dumped["skills"][0]["proficiency"] == 3
+
+
+def test_html_to_text_preserves_structure_and_drops_markup() -> None:
+    from jobagent.tools.profile import html_to_text
+
+    html = (
+        "<html><head><style>body{color:red}</style>"
+        "<script>var x=1;</script></head><body>"
+        "<h1>Janardhan Revuru</h1>"
+        "<p>AI engineering leader</p>"
+        "<ul><li>Python</li><li>PyTorch</li></ul>"
+        "<h2>Experience</h2><p>Built agentic systems 2019&ndash;2026</p>"
+        "</body></html>"
+    )
+    out = html_to_text(html)
+    assert "Janardhan Revuru" in out
+    assert "AI engineering leader" in out
+    assert "Python" in out and "PyTorch" in out
+    assert "Experience" in out
+    assert "–" in out  # &ndash; decoded
+    assert "<" not in out
+    assert "var x=1" not in out  # script content dropped
+    assert "color:red" not in out  # style content dropped
+
+
+def test_html_resume_readable_by_read_text(tmp_path) -> None:
+    from jobagent.tools.profile import _read_text
+
+    p = tmp_path / "resume.html"
+    p.write_text("<html><body><h1>Hi</h1><p>Body text here.</p></body></html>", encoding="utf-8")
+    text = _read_text(p)
+    assert "Hi" in text and "Body text here" in text

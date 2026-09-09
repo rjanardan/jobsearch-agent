@@ -17,6 +17,7 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 _TEXT_EXT = {".txt", ".md", ".markdown"}
+_HTML_EXT = {".html", ".htm"}
 _PDF_EXT = {".pdf"}
 _STRUCTURED_EXT = {".yaml", ".yml", ".json"}
 
@@ -80,16 +81,21 @@ def _model() -> str:
 
 
 def _read_text(path: Path) -> str:
-    """Extract plain text from .txt/.md/.pdf (FR-1)."""
+    """Extract plain text from .txt/.md/.html/.pdf (FR-1)."""
     if path.suffix.lower() in _TEXT_EXT:
         return path.read_text(encoding="utf-8", errors="replace")
+    if path.suffix.lower() in _HTML_EXT:
+        return html_to_text(path.read_text(encoding="utf-8", errors="replace"))
     if path.suffix.lower() in _PDF_EXT:
         from pypdf import PdfReader
 
         reader = PdfReader(str(path))
         pages = [(p.extract_text() or "") for p in reader.pages]
         return "\n\n".join(pages)
-    raise ValueError(f"unsupported resume format: {path.suffix} (want {sorted(_TEXT_EXT | _PDF_EXT)})")
+    raise ValueError(
+        f"unsupported resume format: {path.suffix} "
+        f"(want {sorted(_TEXT_EXT | _HTML_EXT | _PDF_EXT)})"
+    )
 
 
 def parse_resume_text(text: str) -> ProfileData:
@@ -109,7 +115,7 @@ def parse_resume_text(text: str) -> ProfileData:
                 "options": {"num_ctx": 8192, "temperature": 0, "num_predict": 2048},
                 "messages": [
                     {"role": "system", "content": "You structure resumes into a JSON profile. " + _PROFILE_SCHEMA_HINT},
-                    {"role": "user", "content": text[:6000]},
+                    {"role": "user", "content": text[:14000]},
                 ],
             },
             timeout=180,
@@ -142,7 +148,7 @@ def load_structured(path: Path) -> ProfileData:
 
 
 def load_profile(path: str | Path) -> ProfileData:
-    """Load a profile from a resume (txt/md/pdf) or a structured file (yaml/json)."""
+    """Load a profile from a resume (txt/md/html/pdf) or structured file (yaml/json)."""
     p = Path(path).expanduser()
     if not p.exists():
         raise ProfileParseError(f"no such file: {p}")
@@ -155,6 +161,61 @@ def source_hash(path: str | Path) -> str:
     import hashlib
 
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+# Tag sets for html_to_text — immutable on purpose (no class-attribute state).
+_HTML_SKIP = frozenset({"script", "style", "head", "title", "noscript"})
+_HTML_BLOCK = frozenset(
+    {"p", "div", "li", "tr", "br", "section", "article", "header",
+     "ul", "ol", "table", "blockquote"}
+)
+_HTML_HEADING = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+
+
+def html_to_text(html: str) -> str:
+    """Structure-preserving HTML→text for resume pages (FR-1 HTML resumes).
+
+    Script/style content is dropped; block boundaries (headings, lists,
+    paragraphs, table rows) are kept as line breaks so a downstream reader
+    still sees the resume's section layout. Entities are decoded. The parser
+    is spec-tolerant: malformed markup yields the best-effort text.
+    """
+    from html.parser import HTMLParser
+
+    class _Extractor(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.parts: list[str] = []
+            self._skip = 0
+
+        def handle_starttag(self, tag, attrs) -> None:
+            if tag in _HTML_SKIP:
+                self._skip += 1
+            if tag in _HTML_BLOCK:
+                self.parts.append("\n")
+            if tag == "li":
+                self.parts.append("- ")
+            if tag in _HTML_HEADING:
+                self.parts.append("## ")
+
+        def handle_endtag(self, tag) -> None:
+            if tag in _HTML_SKIP:
+                self._skip = max(0, self._skip - 1)
+            if tag in _HTML_BLOCK:
+                self.parts.append("\n")
+
+        def handle_data(self, data) -> None:
+            if not self._skip and data.strip():
+                self.parts.append(data)
+
+    extractor = _Extractor()
+    extractor.feed(html)
+    extractor.close()
+    text = "".join(extractor.parts)
+    text = re.sub(r"[ \t\r]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def strip_html(text: str) -> str:

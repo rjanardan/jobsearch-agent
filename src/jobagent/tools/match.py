@@ -38,6 +38,14 @@ _BANDS = {
     "founder": 6,
 }
 
+# Listing data spells Bengaluru "Bangalore" (ATS feeds spell it either way);
+# alias sets fold the variants onto one token for the location dimension.
+# Data-driven: 40 of the 54 India rows in the store are "Bangalore, India".
+_CITY_ALIASES: dict[str, set[str]] = {
+    "bengaluru": {"bangalore", "bengaluru"},
+    "bangalore": {"bangalore", "bengaluru"},
+}
+
 _WEIGHTS = {
     "role": 0.30,
     "skills": 0.25,
@@ -184,17 +192,19 @@ def score_job(profile: ProfileData, job: dict, cutoff: float = 60.0) -> MatchRes
     is_remote = _is_remote(job)
     profile_loc = _norm(profile.location or "")
     profile_city = (profile_loc.split() or [""])[0]  # "bengaluru india" -> "bengaluru"
+    city_tokens = {profile_city} | _CITY_ALIASES.get(profile_city, set())
+    loc_tokens = set(loc.split())
     loc_evidence: list[str] = []
     if remote_ok and is_remote:
         loc_score, loc_detail = 1.0, "role is remote and profile allows remote"
         loc_evidence = [job.get("location") or ""]
-    elif profile_city and profile_city in loc:
+    elif profile_city and city_tokens & loc_tokens:
         loc_score, loc_detail = 1.0, f"location matches profile ({profile.location})"
         loc_evidence = [job.get("location") or ""]
     elif is_remote:
         loc_score, loc_detail = 0.4, "role is remote but profile prefers on-site"
     elif profile_city:
-        same_country = "india" in loc or "in " in f" {loc} "
+        same_country = bool(re.search(r"\bindia\b", loc)) or "in " in f" {loc} "
         loc_score, loc_detail = (0.5, "role in India, not profile city") if same_country else (0.1, "location outside profile region")
         if loc_score < 0.5:
             gaps.append(f"location: {job.get('location')} vs profile {profile.location}")

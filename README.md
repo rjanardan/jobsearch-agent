@@ -93,7 +93,7 @@ What the nightly run executes, from entry to persistence, and the services every
 | Policy `guardrails/policy.py` | pre-score filter that states a reason | `evaluate(job) → allow \| reject + reason`; rule set in `config/filters.yaml` |
 | Match `tools/match.py` | deterministic, explainable scoring | `score(job, profile)` → total, per-dimension evidence, gaps, rationale; dims role .30 · skills .25 · seniority .15 · location .20 · comp .10 |
 | Runner `tools/scout.py` | the match choke point: gate → score → persist | `run_matching(cutoff)` writes `match` rows and prints the daily digest |
-| Profile `tools/profile.py`, `store/profiles.py` | resume → versioned structured profile, the match target | `ja profile load <file>` reads txt/md/pdf resumes and YAML/JSON profiles; store keeps versions with an active flag |
+| Profile `tools/profile.py`, `store/profiles.py` | resume → versioned structured profile, the match target | `ja profile load <file>` reads txt/md/html/pdf resumes and YAML/JSON profiles; store keeps versions with an active flag |
 | Store `store/` | persistence and schema evolution | SQLAlchemy models on Postgres 17 + pgvector; alembic migrations; tables `app`, `source`, `jobs`, `match`, `source_state`, `profiles` + joins |
 | Model gateway `models/` | one interface to every model; the routing decision lives here | `chat()` / `embed()`; local route = Ollama `qwen3:4b`, `nomic-embed-text`; API route (DeepSeek) reserved for M6 on-demand reasoning |
 | Telemetry `telemetry.py` | one shared tracing surface for every service | OTel spans per service call → Phoenix over OTLP `:4317`, UI `:6006`; each nightly run is one tree trace (`nightly.run` → stage spans) |
@@ -123,7 +123,7 @@ deploy/           optional docker-compose for VM deployment; launchd plist
 |---|---|
 | M1 store schema | ✅ 8 tables + alembic `9b6cb6ba60ef`, `0f2a166e0056` (job.description) |
 | M2 discovery | ✅ HN / RSS / ATS adapters, local-model extraction, 421 jobs, source health |
-| M3 profile | ✅ versioned profile store, resume parser (txt/md/pdf via local model), YAML/JSON load |
+| M3 profile | ✅ versioned profile store, resume parser (txt/md/html/pdf via local model), YAML/JSON load |
 | M4 matching | ✅ deterministic explainable scoring, policy gate, digest, golden-set tests |
 | M5 nightly graph | ✅ LangGraph `discover -> match`, Postgres checkpointer, replay-safe threads, launchd plist |
 | M6 artifacts | ⏳ resume variants, cover letters, HITL interrupts |
@@ -135,7 +135,7 @@ deploy/           optional docker-compose for VM deployment; launchd plist
 ```bash
 ja discover          # fetch + extract + persist across enabled sources
 ja jobs              # recent jobs
-ja profile load <f>  # resume (pdf/txt/md) or structured profile (yaml/json)
+ja profile load <f>  # resume (txt/md/html/pdf) or structured profile (yaml/json)
 ja profile show      # active profile
 ja match             # score all active jobs; digest table with gaps
 ja nightly           # scheduled graph: discover -> match (checkpointed, replay-safe)
@@ -159,16 +159,19 @@ Phoenix keepalive agent; `deploy/install-services.sh` installs both.
 Deterministic local prefilter scoring, no model call: dimensions `role`,
 `skills`, `seniority`, `location`, `comp` (weights 0.30/0.25/0.15/0.20/0.10),
 each recorded with evidence. Every score stores its dimension breakdown, gap
-list, and rationale in the `match` table. Policy filters (`config/filters.yaml`,
-FR-6) run before scoring; below-cutoff roles stay searchable (FR-8).
+list, and rationale in the `match` table. Policy filters (`config/filters.yaml`, FR-6) run before scoring — the live
+config gates Location India and full-time employment (word-boundary country
+match; two-tier employment markers); below-cutoff roles stay searchable (FR-8).
 
 ```bash
 ja match --cutoff 60 --top 10
-# 421 jobs | 0 policy-rejected | 421 scored | 2 passed (cutoff 60.0)
-# score  pass  company  title  location
-#   60    Y    Airbnb   Senior Staff Machine Learning Engineer, Trust  Remote - USA
+# 421 jobs | 368 policy-rejected | 53 scored | 0 passed (cutoff 60.0)
+# policy: Location India, full-time only (profile v4, config/filters.yaml)
+# score  pass  company  title                                        location
+#   52    n    Gitlab   Director of Engineering, Organizations & Cells  Bangalore, India
 ```
 
-Tests: `tests/test_match.py` holds the golden-set regression (synthetic roles
-with expected ordering/dimensions); `tests/test_profile.py` covers schema
-validation and resume-text handling.
+Tests: `tests/test_match.py` holds the golden-set regression (India/full-time
+policy gates plus synthetic roles with expected ordering/dimensions);
+`tests/test_profile.py` covers schema validation, HTML ingestion, and
+resume-text handling.

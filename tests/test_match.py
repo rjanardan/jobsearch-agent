@@ -52,7 +52,7 @@ def _job(**kw) -> dict:
 def test_strong_staff_ml_role_passes_cutoff() -> None:
     job = _job(
         title="Staff Machine Learning Engineer, AI Platform",
-        location="Remote - USA",
+        location="Bangalore, India",  # spelling variant of profile city Bengaluru
         description=(
             "Build ML platforms with Python and PyTorch. Postgres for feature "
             "stores, Kubernetes for serving. LangGraph agent orchestration."
@@ -64,6 +64,7 @@ def test_strong_staff_ml_role_passes_cutoff() -> None:
     # skills evidenced: python, pytorch, postgres, kubernetes, langgraph -> all 5
     skills = result.dimensions["skills"]
     assert len(skills.evidence) >= 4, skills.evidence
+    # Bangalore == Bengaluru via the city alias, not a 0.5 "India, not city"
     assert result.dimensions["location"].score == 1.0
     assert result.dimensions["seniority"].score >= 0.85
 
@@ -125,3 +126,48 @@ def test_policy_remote_only_and_location() -> None:
     assert apply_policy(_job(title="Engineer", location="NYC", remote="yes"), {"remote": "yes"}).allowed
     assert not apply_policy(_job(title="Engineer", location="Paris, France", remote="no"), {"locations": ["Bengaluru"]}).allowed
     assert apply_policy(_job(title="Engineer", location="Bengaluru, India", remote="no"), {"locations": ["Bengaluru"]}).allowed
+
+
+# ------------------------------------------- India / full-time policy (2026-09-10)
+
+INDIA_FULLTIME = {"countries": ["india"], "employment": ["full-time"]}
+
+
+def test_policy_india_country_gate() -> None:
+    assert apply_policy(_job(title="Staff Engineer", location="Bangalore, India"), INDIA_FULLTIME).allowed
+    assert apply_policy(_job(title="Staff Engineer", location="Remote, India"), INDIA_FULLTIME).allowed
+    assert not apply_policy(_job(title="Staff Engineer", location="Remote - USA"), INDIA_FULLTIME).allowed
+    assert not apply_policy(_job(title="Staff Engineer", location="Remote"), INDIA_FULLTIME).allowed  # strict: no country evidence
+    assert not apply_policy(_job(title="Staff Engineer", location=None), INDIA_FULLTIME).allowed
+    # word boundary: "Indiana, United States" must NOT read as India
+    assert not apply_policy(_job(title="Staff Engineer", location="Indiana, United States"), INDIA_FULLTIME).allowed
+
+
+def test_policy_full_time_gate() -> None:
+    assert apply_policy(
+        _job(title="Staff Engineer", location="Bangalore, India", description="Build AI platforms in Python."),
+        INDIA_FULLTIME,
+    ).allowed
+    assert not apply_policy(
+        _job(title="Staff Engineer", location="Bangalore, India", description="Part-time role, 20 hours a week."),
+        INDIA_FULLTIME,
+    ).allowed
+    assert not apply_policy(
+        _job(title="Software Engineer (Contract)", location="Bangalore, India"),
+        INDIA_FULLTIME,
+    ).allowed
+    assert not apply_policy(
+        _job(title="Machine Learning Internship", location="Bangalore, India"),
+        INDIA_FULLTIME,
+    ).allowed
+    # subject-matter plural must not trip the contract marker
+    assert apply_policy(
+        _job(title="Staff Engineer", location="Bangalore, India", description="Owns vendor contracts for the platform team."),
+        INDIA_FULLTIME,
+    ).allowed
+    # GitLab JD boilerplate: "contract" in a testing list is not employment
+    # signal (regression from the 2026-09-10 corpus run)
+    assert apply_policy(
+        _job(title="Staff Engineer", location="Bangalore, India", description="Add unit, integration, contract, and end-to-end tests."),
+        INDIA_FULLTIME,
+    ).allowed

@@ -89,7 +89,7 @@ profile_app = typer.Typer(help="Master profile (FR-1/2)")
 
 @profile_app.command("load")
 def profile_load(path: str) -> None:
-    """Parse a resume (pdf/txt/md) or structured profile (yaml/json) into the store."""
+    """Parse a resume (txt/md/html/pdf) or structured profile (yaml/json)."""
     try:
         with telemetry.span("profile.load", attrs={"source": Path(path).name}):
             data = load_profile(path)
