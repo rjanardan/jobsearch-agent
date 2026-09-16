@@ -159,7 +159,7 @@ Phoenix keepalive agent; `deploy/install-services.sh` installs both.
 Deterministic local prefilter scoring, no model call: dimensions `role`,
 `skills`, `seniority`, `location`, `comp` (weights 0.30/0.25/0.15/0.20/0.10),
 each recorded with evidence. Every score stores its dimension breakdown, gap
-list, and rationale in the `match` table. Policy filters (`config/filters.yaml`, FR-6) run before scoring — the live
+list, and rationale in the `match` table. Policy filters (`config/filters.yaml`, FR-6) and companies (`config/companies.yaml`, gitignored) run before scoring — the live
 config gates Location India and full-time employment (word-boundary country
 match; two-tier employment markers); below-cutoff roles stay searchable (FR-8).
 
