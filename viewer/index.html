@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JobSearch Agent — Job Viewer</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: #888; font-size: 13px; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+  .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px 18px; min-width: 150px; }
+  .card .num { font-size: 26px; font-weight: 700; }
+  .card .label { font-size: 12px; color: #888; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+  th { background: #f5f5f5; position: sticky; top: 0; cursor: pointer; user-select: none; }
+  tr:hover td { background: #fafafa; }
+  .score { font-weight: 700; }
+  .pass { color: #1a7f37; }
+  .fail { color: #cf222e; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 11px; }
+  .tag.yes { background: #dafbe1; color: #1a7f37; }
+  .tag.no { background: #ffebe9; color: #cf222e; }
+  .controls { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  input, select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+  button { padding: 6px 14px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
+  button:hover { background: #f0f0f0; }
+  .dim { color: #555; font-size: 12px; }
+  .dim b { color: #111; }
+  pre.rationale { white-space: pre-wrap; font-size: 12px; background: #f6f8fa; padding: 8px; border-radius: 6px; }
+  .muted { color: #999; }
+  @media (prefers-color-scheme: dark) {
+    th { background: #222; } tr:hover td { background: #1c1c1c; }
+    pre.rationale { background: #111; } .dim { color: #bbb; } .dim b { color: #fff; }
+  }
+</style>
+</head>
+<body>
+  <h1>JobSearch Agent — Job Viewer</h1>
+  <p class="sub">Read-only view of the local Postgres job store (NFR-1: never leaves this host)</p>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="controls">
+    <input id="q" type="search" placeholder="Search title / company / location…" style="flex:1;min-width:220px">
+    <select id="sort"><option value="score">Score ↓</option><option value="date">Date ↓</option><option value="company">Company A→Z</option></select>
+    <select id="scope"><option value="all">All jobs</option><option value="scored">Scored</option><option value="passed">Passed cutoff</option></select>
+    <button id="refresh">↻ Refresh</button>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th data-k="score">Score</th>
+        <th data-k="passed">Pass</th>
+        <th data-k="company_name">Company</th>
+        <th data-k="title">Title</th>
+        <th data-k="location">Location</th>
+        <th data-k="profile_version">Profile</th>
+        <th>Dimensions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <p class="muted" id="count"></p>
+
+<script>
+const API = "http://localhost:8765";
+let all = [];
+
+async function load() {
+  try {
+    const [jobs, dims] = await Promise.all([
+      fetch(API + "/api/jobs").then(r => r.json()),
+      fetch(API + "/api/dims").then(r => r.json())
+    ]);
+    window.DIMS = dims;
+    all = jobs;
+    renderCards();
+    render();
+  } catch (e) {
+    document.getElementById("tbody").innerHTML =
+      `<tr><td colspan="7">⚠ Can't reach viewer server at ${API} — is it running? (${e.message})</td></tr>`;
+  }
+}
+
+function renderCards() {
+  const scored = all.filter(j => j.score != null);
+  const passed = scored.filter(j => j.passed);
+  const activeProf = (all.find(j => j.profile_version) || {}).profile_version;
+  const html = [
+    ["Total jobs", all.length],
+    ["Scored", scored.length],
+    ["India-eligible (scored)", scored.length],
+    ["Passed cutoff", passed.length],
+    ["Active profile", "v" + (activeProf || "?")]
+  ].map(([l, n]) => `<div class="card"><div class="num">${n}</div><div class="label">${l}</div></div>`).join("");
+  document.getElementById("cards").innerHTML = html;
+}
+
+function dimsOf(j) {
+  const d = (window.DIMS && window.DIMS[j.job_id]) || j.dimensions;
+  if (!d) return "";
+  const score = j.score != null ? Math.round(j.score) : "—";
+  const parts = [];
+  const labels = { role: "role", skills: "skills", seniority: "seniority", location: "loc", comp: "comp" };
+  for (const [k, v] of Object.entries(d)) {
+    if (k === "total") continue;
+    const vn = typeof v === "object" ? (v.score ?? v.value ?? v) : v;
+    parts.push(`<span class="dim"><b>${labels[k] || k}</b>: ${vn}</span>`);
+  }
+  return `<div class="dim">${score}/100 — ${parts.join(" · ")}</div>`;
+}
+
+function render() {
+  const q = (document.getElementById("q").value || "").toLowerCase();
+  const sort = document.getElementById("sort").value;
+  const scope = document.getElementById("scope").value;
+  let rows = all.filter(j => {
+    if (scope === "scored" && j.score == null) return false;
+    if (scope === "passed" && !j.passed) return false;
+    if (q && ![j.title, j.company_name, j.location].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  });
+  rows = rows.slice().sort((a, b) => {
+    if (sort === "score") return (b.score ?? -1) - (a.score ?? -1);
+    if (sort === "company") return (a.company_name || "").localeCompare(b.company_name || "");
+    return (b.posted_at || "").localeCompare(a.posted_at || "");
+  });
+  const MAX = 500;
+  const body = document.getElementById("tbody");
+  body.innerHTML = rows.slice(0, MAX).map(j => `
+    <tr>
+      <td class="score">${j.score != null ? Math.round(j.score) : "—"}</td>
+      <td>${j.passed ? '<span class="tag yes">PASS</span>' : j.score != null ? '<span class="tag no">no</span>' : '<span class="muted">—</span>'}</td>
+      <td>${j.company_name || "—"}</td>
+      <td>${j.title || "—"}</td>
+      <td>${j.location || "—"}</td>
+      <td>${j.profile_version ? "v" + j.profile_version : "—"}</td>
+      <td>${dimsOf(j)}</td>
+    </tr>`).join("");
+  document.getElementById("count").textContent =
+    `${rows.length} shown${rows.length > MAX ? " (top " + MAX + ")" : ""} · ${all.length} total`;
+}
+
+document.getElementById("q").addEventListener("input", render);
+document.getElementById("sort").addEventListener("change", render);
+document.getElementById("scope").addEventListener("change", render);
+document.getElementById("refresh").addEventListener("click", load);
+load();
+</script>
+</body>
+</html>
