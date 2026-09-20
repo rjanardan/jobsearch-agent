@@ -97,10 +97,17 @@ def apply_policy(job: dict, filters: dict | None) -> PolicyResult:
                 f"location '{job.get('location')}' outside allowed countries {allowed_countries}"
             )
 
+    leader_titles = [t.lower() for t in (filters.get("leader_titles") or [])]
+    if leader_titles and not any(t in title for t in leader_titles):
+        reasons.append(
+            f"title '{job.get('title')}' is not an engineering-leadership role "
+            f"(leader_titles: {leader_titles})"
+        )
+
     allowed_locations = filters.get("locations") or []
     if allowed_locations and location and not any(
         metro.lower() in location for metro in allowed_locations
-    ) and job.get("remote") != "yes":
+    ):
         reasons.append(f"location '{job.get('location')}' outside allowed metros")
 
     remote_rule = (filters.get("remote") or "any").lower()

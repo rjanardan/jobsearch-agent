@@ -12,6 +12,7 @@ from rich.table import Table
 from sqlalchemy import select
 
 from jobagent import telemetry
+from jobagent.guardrails.policy import apply_policy
 from jobagent.store.db import session_scope
 from jobagent.store.jobs import count_jobs, recent_jobs
 from jobagent.store.matches import count_matches
@@ -160,6 +161,44 @@ def match(cutoff: float = 60.0, top: int = 10) -> None:
     for m, j in rows[:5]:
         console.print(f"\n[bold cyan]{m.score:.0f}[/bold cyan] {j.company_name} — {j.title}")
         console.print(m.rationale or "(policy-rejected)")
+
+
+# ----------------------------------------------------------------------------- prune
+
+@app.command("prune")
+def prune() -> None:
+    """Deactivate active jobs that fail the current policy (city + leader title).
+
+    Keeps history (rows are preserved, `active` is flipped to false) but hides
+    non-target roles everywhere: `ja match`, `ja jobs`, and the viewer only see
+    active rows. NFR-1 safe: read-only against config/policy, local only.
+    """
+    def _filters() -> dict:
+        cfg = yaml.safe_load(Path(CONFIG_DIR / "filters.yaml").read_text(encoding="utf-8")) or {}
+        return cfg
+
+    filters = _filters()
+    deactivated = 0
+    with session_scope() as session:
+        active_jobs = session.execute(select(Job).where(Job.active.is_(True))).scalars().all()
+        for j in active_jobs:
+            job_dict = {
+                "title": j.title,
+                "company_name": j.company_name,
+                "location": j.location,
+                "remote": j.remote,
+                "level": j.level,
+                "description": j.description or "",
+            }
+            if not apply_policy(job_dict, filters).allowed:
+                j.active = False
+                deactivated += 1
+        session.commit()
+    kept = len(active_jobs) - deactivated
+    console.print(
+        f"[bold]prune:[/bold] {len(active_jobs)} active -> kept {kept}, "
+        f"deactivated [red]{deactivated}[/red] (city + leader-title policy)"
+    )
 
 
 # --------------------------------------------------------------------- nightly

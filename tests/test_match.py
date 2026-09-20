@@ -143,6 +143,49 @@ def test_policy_india_country_gate() -> None:
     assert not apply_policy(_job(title="Staff Engineer", location="Indiana, United States"), INDIA_FULLTIME).allowed
 
 
+# Bengaluru/Bangalore + Pune only (2026-09-10 refinement): metro allow-list.
+CITY_GATE = {"countries": ["india"], "employment": ["full-time"],
+             "locations": ["bengaluru", "bangalore", "pune"]}
+
+
+def test_policy_city_gate_bengaluru_bangalore_pune() -> None:
+    # allowed cities
+    assert apply_policy(_job(title="Director of Engineering", location="Bengaluru, India"), CITY_GATE).allowed
+    assert apply_policy(_job(title="Director of Engineering", location="Bangalore, India"), CITY_GATE).allowed
+    assert apply_policy(_job(title="Director of Engineering", location="Pune, India"), CITY_GATE).allowed
+    # remote labelled but city-specific ("Remote - Bangalore, India" is a Bangalore role)
+    assert apply_policy(_job(title="Director of Engineering", location="Remote - Bangalore, India"), CITY_GATE).allowed
+    # other Indian cities are NOT allowed
+    assert not apply_policy(_job(title="Director of Engineering", location="Gurugram, India"), CITY_GATE).allowed
+    assert not apply_policy(_job(title="Director of Engineering", location="Hyderabad, India"), CITY_GATE).allowed
+    assert not apply_policy(_job(title="Director of Engineering", location="Mumbai, India"), CITY_GATE).allowed
+    # abroad / remote with no allowed city is rejected
+    assert not apply_policy(_job(title="Director of Engineering", location="Remote - USA"), CITY_GATE).allowed
+    assert not apply_policy(_job(title="Director of Engineering", location="Remote, India"), CITY_GATE).allowed
+    assert not apply_policy(_job(title="Director of Engineering", location=None), CITY_GATE).allowed
+
+
+# Engineering-leadership titles only (2026-09-10 refinement).
+LEADER_GATE = CITY_GATE | {"leader_titles": ["director", "senior director",
+                                              "head of engineering", "vp of engineering",
+                                              "engineering leader", "engineering manager", "cto"]}
+
+
+def test_policy_leader_title_gate() -> None:
+    # leadership titles pass
+    assert apply_policy(_job(title="Director of Engineering", location="Bengaluru, India"), LEADER_GATE).allowed
+    assert apply_policy(_job(title="Senior Director of Engineering", location="Bengaluru, India"), LEADER_GATE).allowed
+    assert apply_policy(_job(title="Head of Engineering", location="Bangalore, India"), LEADER_GATE).allowed
+    assert apply_policy(_job(title="VP of Engineering", location="Pune, India"), LEADER_GATE).allowed
+    assert apply_policy(_job(title="Engineering Manager, Platform", location="Bengaluru, India"), LEADER_GATE).allowed
+    # IC / non-leader titles are rejected, even in Bengaluru
+    assert not apply_policy(_job(title="Staff Software Engineer", location="Bengaluru, India"), LEADER_GATE).allowed
+    assert not apply_policy(_job(title="Senior Software Engineer, AI", location="Bengaluru, India"), LEADER_GATE).allowed
+    assert not apply_policy(_job(title="Software Engineer", location="Bengaluru, India"), LEADER_GATE).allowed
+    assert not apply_policy(_job(title="Staff ML Engineer", location="Bengaluru, India"), LEADER_GATE).allowed
+    assert not apply_policy(_job(title="Solutions Engineer", location="Bengaluru, India"), LEADER_GATE).allowed
+
+
 def test_policy_full_time_gate() -> None:
     assert apply_policy(
         _job(title="Staff Engineer", location="Bangalore, India", description="Build AI platforms in Python."),
