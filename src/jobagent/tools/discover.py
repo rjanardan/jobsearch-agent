@@ -154,7 +154,23 @@ def run_discovery(session: Session, sources_cfg: dict, companies: list[dict]) ->
 
             ats_cfg = sources_cfg.get("ats_scan", {})
             if ats_cfg.get("enabled", True):
-                ats_companies = [c for c in companies if c.get("careers_type") in {"greenhouse", "lever", "ashby"}]
+                # Fetch-time narrowing: pass the configured term lists down so
+                # non-target listings are dropped before they reach the store.
+                terms = {}
+                if ats_cfg.get("leader_title_terms"):
+                    terms["leader_title_terms"] = [
+                        t.lower() for t in ats_cfg["leader_title_terms"]
+                    ]
+                if ats_cfg.get("location_terms"):
+                    terms["location_terms"] = [
+                        t.lower() for t in ats_cfg["location_terms"]
+                    ]
+                ats_companies = [
+                    c for c in companies
+                    if c.get("careers_type") in {"greenhouse", "lever", "ashby"}
+                ]
+                if terms and ats_companies:
+                    ats_companies = [{**c, "_filter_terms": terms} for c in ats_companies]
                 print("discover: ats scan...", flush=True)
                 with telemetry.span("discover.ats") as sp:
                     try:

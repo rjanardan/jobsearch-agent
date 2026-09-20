@@ -26,14 +26,15 @@ INDEX = HERE / "index.html"
 
 _JOBS_SQL = text(
     """
-    SELECT j.id AS job_id,
+    SELECT DISTINCT ON (j.id)
+           j.id AS job_id,
            j.title, j.company_name, j.location, j.posted_at, j.url,
            j.source, j.level, j.remote,
            m.score, m.passed, m.profile_version, m.gaps
     FROM job j
     LEFT JOIN match m ON m.job_id = j.id
     WHERE j.active
-    ORDER BY m.score DESC NULLS LAST, j.posted_at DESC NULLS LAST
+    ORDER BY j.id, m.score DESC NULLS LAST, j.posted_at DESC NULLS LAST
     """
 )
 

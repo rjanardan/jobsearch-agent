@@ -101,8 +101,34 @@ def _board_name(board: str) -> str:
     return _BOARD_CACHE[board]
 
 
+def _prefilter(companies: list[dict], title: str | None, location: str | None) -> bool:
+    """Fetch-time efficiency filter — skip listings that cannot pass policy.
+
+    This is a *yield* optimisation, not the policy gate: it keeps network and
+    local-model work (and therefore the job corpus) focused on
+    engineering-leadership roles in the target cities. The authoritative gate
+    is still `guardrails/policy.apply_policy`; anything that slips through here
+    is caught and recorded there. Each company entry may override the defaults
+    with `leader_title_terms` / `location_terms`; entries without any terms are
+    treated as pass-through.
+    """
+    terms = companies[0].get("_filter_terms") or {}
+    leader_terms = terms.get("leader_title_terms")
+    location_terms = terms.get("location_terms")
+    t = (title or "").lower()
+    loc = (location or "").lower()
+    if leader_terms and not any(term in t for term in leader_terms):
+        return False
+    # location terms: reject when none match
+    return not (location_terms and not any(term in loc for term in location_terms))
+
+
 def fetch_ats(companies: list[dict]) -> list[dict]:
-    """Fetch jobs for all ATS-type companies. One failing company is logged, not fatal."""
+    """Fetch jobs for all ATS-type companies. One failing company is logged, not fatal.
+
+    An optional `_filter_terms` entry (leader_title_terms / location_terms) is
+    applied per listing so non-target roles are never persisted.
+    """
     out: list[dict] = []
     errors: list[str] = []
     with httpx.Client() as client:
@@ -113,11 +139,17 @@ def fetch_ats(companies: list[dict]) -> list[dict]:
                 continue
             try:
                 if ctype == "greenhouse":
-                    out.extend(_gh(client, board))
+                    fetched = _gh(client, board)
                 elif ctype == "lever":
-                    out.extend(_lever(client, board))
+                    fetched = _lever(client, board)
                 elif ctype == "ashby":
-                    out.extend(_ashby(client, board))
+                    fetched = _ashby(client, board)
+                else:
+                    continue
+                out.extend(
+                    job for job in fetched
+                    if _prefilter([c], job.get("title"), job.get("location"))
+                )
             except Exception as exc:  # noqa: BLE001 - per-company degradation (NFR-6)
                 errors.append(f"{board}: {exc}")
     if errors:
